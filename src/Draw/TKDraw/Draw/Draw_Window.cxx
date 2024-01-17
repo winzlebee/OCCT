@@ -1206,7 +1206,7 @@ void Run_Appli(Standard_Boolean (*interprete)(const char*))
 
   // Create a handler for the draw display
   #if defined(HAVE_XLIB)
-  Tcl_CreateFileHandler(ConnectionNumber(Draw_WindowDisplay),
+  Tcl_CreateFileHandler(Draw_DisplayConnection->FileDescriptor(),
                         TCL_READABLE,
                         processXEvents,
                         (ClientData)0);

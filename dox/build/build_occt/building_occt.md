@@ -108,6 +108,8 @@ The following table gives the full list of environment variables used at the con
 | USE_OPENVR    | Boolean | Indicates whether OpenVR product should be used in OCCT visualization module for VR support |
 | USE_OPENGL    | Boolean | Indicates whether TKOpenGl graphic driver using OpenGL library (desktop) should be built |
 | USE_GLES2     | Boolean | Indicates whether TKOpenGles graphic driver using OpenGL ES library should be built |
+| USE_XLIB      | Boolean | Indicates whether Xlib      should be supported by OCCT visualization module for window creation |
+| USE_WAYLAND   | Boolean | Indicates whether Wayland   should be supported by OCCT visualization module for window creation |
 | USE_RAPIDJSON | Boolean | Indicates whether RapidJSON product should be used for JSON format support |
 | USE_DRACO     | Boolean | Indicates whether Draco mesh compression library should be used |
 | USE_TK        | Boolean | Indicates whether Tcl/Tk product should be used in Draw Harness for user interface |

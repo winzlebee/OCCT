@@ -811,7 +811,8 @@ TCollection_AsciiString ViewerTest::ViewerInit(const ViewerTest_VinitParams& the
 #if defined(HAVE_XLIB)
   if (isNewDriver)
   {
-    ::Display* aDispX = (::Display*)GetDisplayConnection()->GetDisplayAspect();
+    Handle(Xw_DisplayConnection) anXDispCon = Handle(Xw_DisplayConnection)::DownCast(GetDisplayConnection());
+    ::Display* aDispX = (::Display* )anXDispCon->GetDisplayAspect();
     Tcl_CreateFileHandler(XConnectionNumber(aDispX),
                           TCL_READABLE,
                           VProcessEvents,

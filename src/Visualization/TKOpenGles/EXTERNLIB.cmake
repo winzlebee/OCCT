@@ -9,6 +9,7 @@ set(OCCT_TKOpenGles_EXTERNAL_LIBS
   CSF_user32
   CSF_gdi32
   CSF_XwLibs
+  CSF_wayland
   CSF_Appkit
   CSF_IOKit
   CSF_objc
