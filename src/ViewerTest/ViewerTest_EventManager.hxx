@@ -112,6 +112,12 @@ public:
   //! Handle window input event immediately (flush input buffer).
   Standard_EXPORT virtual void ProcessInput() Standard_OVERRIDE;
 
+  //! Handle window close event.
+  Standard_EXPORT virtual void ProcessClose() Standard_OVERRIDE;
+
+  //! Handle focus event.
+  Standard_EXPORT virtual void ProcessFocus (bool theIsActivated) Standard_OVERRIDE;
+
   //! Handle KeyPress event.
   Standard_EXPORT void ProcessKeyPress(Aspect_VKey theKey);
 
@@ -121,6 +127,12 @@ public:
                                                 const Handle(V3d_View)&               theOldView,
                                                 const Handle(V3d_View)&               theNewView)
     Standard_OVERRIDE;
+
+  //! Return TRUE if input buffer contains unhandled events.
+  bool HasPendingInput() const
+  {
+    return myUI.MoveTo.ToHilight || !myUI.ZoomActions.IsEmpty();
+  }
 
 protected:
   //! Register hot-keys for specified Action.

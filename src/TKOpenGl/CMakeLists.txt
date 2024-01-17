@@ -5,3 +5,7 @@ OCCT_INCLUDE_CMAKE_FILE (adm/cmake/occt_toolkit)
 if (APPLE AND BUILD_USE_PCH)
   set_target_properties(TKOpenGl PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 endif()
+
+if (USE_WAYLAND)
+  target_link_libraries (${PROJECT_NAME} PRIVATE EGL GL)
+endif()

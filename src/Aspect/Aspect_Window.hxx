@@ -31,6 +31,7 @@
 #include <TCollection_AsciiString.hxx>
 
 class Aspect_DisplayConnection;
+class Aspect_WindowInputListener;
 
 DEFINE_STANDARD_HANDLE(Aspect_Window, Standard_Transient)
 
@@ -144,6 +145,12 @@ public:
   //! NULL can be passed instead otherwise.
   virtual void InvalidateContent(const Handle(Aspect_DisplayConnection)& theDisp) { (void)theDisp; }
 
+  //! Return input listener.
+  Aspect_WindowInputListener* GetListener() const { return myListener; }
+
+  //! Set input listener.
+  void SetListener(Aspect_WindowInputListener* theListener) { myListener = theListener; }
+
 public:
   //! Return device pixel ratio (logical to backing store scale factor).
   virtual Standard_Real DevicePixelRatio() const { return 1.0; }
@@ -174,6 +181,8 @@ protected:
   Aspect_GradientBackground MyGradientBackground;
   Aspect_FillMethod         MyBackgroundFillMethod;
   Standard_Boolean          MyIsVirtual;
+
+  Aspect_WindowInputListener* myListener = nullptr;
 
 };
 
