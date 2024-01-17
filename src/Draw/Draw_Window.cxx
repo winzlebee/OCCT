@@ -69,6 +69,8 @@ extern "C" void        Tk_GeometryRequest(Tk_Window tkwin, int reqWidth, int req
 
 #if defined(HAVE_XLIB)
   #include <X11/Xutil.h>
+
+  #include <Xw_DisplayConnection.hxx>
 #endif
 
 #if defined(_WIN32)
@@ -1301,7 +1303,7 @@ Standard_Boolean Init_Appli()
   {
     try
     {
-      Draw_DisplayConnection = new Aspect_DisplayConnection();
+      Draw_DisplayConnection = new Xw_DisplayConnection();
     }
     catch (Standard_Failure const& theFail)
     {

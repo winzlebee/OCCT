@@ -20,7 +20,7 @@
 
 #include <Aspect_VKey.hxx>
 
-class Aspect_DisplayConnection;
+class Xw_DisplayConnection;
 class Aspect_WindowInputListener;
 
 typedef union _XEvent XEvent;
@@ -36,7 +36,7 @@ public:
 public:
   //! Creates a XLib window defined by his position and size in pixels.
   //! Throws exception if window can not be created or Display do not support GLX extension.
-  Standard_EXPORT Xw_Window(const Handle(Aspect_DisplayConnection)& theXDisplay,
+  Standard_EXPORT Xw_Window(const Handle(Xw_DisplayConnection)& theXDisplay,
                             const Standard_CString                  theTitle,
                             const Standard_Integer                  thePxLeft,
                             const Standard_Integer                  thePxTop,
@@ -44,12 +44,15 @@ public:
                             const Standard_Integer                  thePxHeight);
 
   //! Creates a wrapper over existing Window handle
-  Standard_EXPORT Xw_Window(const Handle(Aspect_DisplayConnection)& theXDisplay,
+  Standard_EXPORT Xw_Window(const Handle(Xw_DisplayConnection)& theXDisplay,
                             const Aspect_Drawable                   theXWin,
                             const Aspect_FBConfig                   theFBConfig = NULL);
 
   //! Destroys the Window and all resources attached to it
   Standard_EXPORT ~Xw_Window();
+
+  //! Returns connection to Display.
+  Standard_EXPORT virtual const Handle(Aspect_DisplayConnection)& DisplayConnection() const Standard_OVERRIDE;
 
   //! Opens the window <me>
   Standard_EXPORT virtual void Map() const Standard_OVERRIDE;
@@ -114,6 +117,8 @@ public:
                                               XEvent&                     theMsg);
 
 protected:
+
+  Handle(Xw_DisplayConnection) myDisplay; //!< Display connection
   Aspect_Drawable  myXWindow;  //!< XLib window handle
   Aspect_FBConfig  myFBConfig; //!< GLXFBConfig
   Standard_Integer myXLeft;    //!< left   position in pixels

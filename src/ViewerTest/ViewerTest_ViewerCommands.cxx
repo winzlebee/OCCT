@@ -96,6 +96,7 @@
   #include <WNT_WClass.hxx>
   #include <WNT_Window.hxx>
 #elif defined(HAVE_XLIB)
+  #include <Xw_DisplayConnection.hxx>
   #include <Xw_Window.hxx>
   #include <X11/Xlib.h>
   #include <X11/Xutil.h>
@@ -120,6 +121,7 @@ extern ViewerTest_DoubleMapOfInteractiveAndName& GetMapOfAIS();
 
 #if defined(_WIN32)
 typedef WNT_Window ViewerTest_Window;
+static LRESULT WINAPI AdvViewerWindowProc (HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 #elif defined(HAVE_XLIB)
 typedef Xw_Window ViewerTest_Window;
 static void       VProcessEvents(ClientData, int);
@@ -533,25 +535,28 @@ TCollection_AsciiString ViewerTest::ViewerInit(const ViewerTest_VinitParams& the
   if (isNewDriver)
   {
     // Get connection string
-#if defined(HAVE_XLIB)
-    if (!theParams.DisplayName.IsEmpty())
+    Handle(Aspect_DisplayConnection) aDispConn;
+  #if defined(HAVE_XLIB)
+    if (aDispConn.IsNull())
     {
-      SetDisplayConnection(new Aspect_DisplayConnection(theParams.DisplayName));
+      if (!theParams.DisplayName.IsEmpty())
+      {
+        aDispConn = new Xw_DisplayConnection (theParams.DisplayName);
+      }
+      else
+      {
+        Aspect_XDisplay* aDispX = NULL;
+        // create dedicated display connection instead of reusing Tk connection
+        // so that to proceed events independently through VProcessEvents()/ViewerMainLoop() callbacks
+        /*Draw_Interpretor& aCommands = Draw::GetInterpretor();
+        Tcl_Interp* aTclInterp = aCommands.Interp();
+        Tk_Window aMainWindow = Tk_MainWindow (aTclInterp);
+        aDispX = aMainWindow != NULL ? Tk_Display (aMainWindow) : NULL;*/
+        aDispConn = new Xw_DisplayConnection (aDispX);
+      }
     }
-    else
-    {
-      Aspect_XDisplay* aDispX = NULL;
-      // create dedicated display connection instead of reusing Tk connection
-      // so that to proceed events independently through VProcessEvents()/ViewerMainLoop() callbacks
-      /*Draw_Interpretor& aCommands = Draw::GetInterpretor();
-      Tcl_Interp* aTclInterp = aCommands.Interp();
-      Tk_Window aMainWindow = Tk_MainWindow (aTclInterp);
-      aDispX = aMainWindow != NULL ? Tk_Display (aMainWindow) : NULL;*/
-      SetDisplayConnection(new Aspect_DisplayConnection(aDispX));
-    }
-#else
-    SetDisplayConnection(new Aspect_DisplayConnection());
 #endif
+    SetDisplayConnection(aDispConn);
 
     aGraphicDriver = aFactory->CreateDriver(GetDisplayConnection());
     if (isVirtual)
@@ -575,10 +580,13 @@ TCollection_AsciiString ViewerTest::ViewerInit(const ViewerTest_VinitParams& the
   GetClientRect(GetDesktopWindow(), &aWindowSize);
   aScreenSize.SetValues(aWindowSize.right, aWindowSize.bottom);
 #elif defined(HAVE_XLIB)
-  ::Display* aDispX  = (::Display*)GetDisplayConnection()->GetDisplayAspect();
-  Screen*    aScreen = DefaultScreenOfDisplay(aDispX);
-  aScreenSize.x()    = WidthOfScreen(aScreen);
-  aScreenSize.y()    = HeightOfScreen(aScreen);
+  if (Handle(Xw_DisplayConnection) anXDispCon = Handle(Xw_DisplayConnection)::DownCast(GetDisplayConnection()))
+  {
+    ::Display* aDispX = (::Display* )anXDispCon->GetDisplayAspect();
+    Screen* aScreen   = DefaultScreenOfDisplay(aDispX);
+    aScreenSize.x()   = WidthOfScreen(aScreen);
+    aScreenSize.y()   = HeightOfScreen(aScreen);
+  }
 #elif defined(__APPLE__)
   GetCocoaScreenResolution(aScreenSize.x(), aScreenSize.y());
 #else
@@ -722,7 +730,9 @@ TCollection_AsciiString ViewerTest::ViewerInit(const ViewerTest_VinitParams& the
                                     Quantity_NOC_BLACK);
     VT_GetWindow()->RegisterRawInputDevices(WNT_Window::RawInputMask_SpaceMouse);
 #elif defined(HAVE_XLIB)
-    VT_GetWindow() = new Xw_Window(aGraphicDriver->GetDisplayConnection(),
+    Handle(Xw_DisplayConnection) anXDispCon = Handle(Xw_DisplayConnection)::DownCast(aGraphicDriver->GetDisplayConnection());
+
+    VT_GetWindow() = new Xw_Window(anXDispCon,
                                    aTitle.ToCString(),
                                    (int)aPxTopLeft.x(),
                                    (int)aPxTopLeft.y(),
@@ -741,9 +751,7 @@ TCollection_AsciiString ViewerTest::ViewerInit(const ViewerTest_VinitParams& the
     // (which is technically also possible)
     TCollection_AsciiString aCanvasId = getModuleCanvasId();
     if (!aCanvasId.IsEmpty())
-    {
       aCanvasId = TCollection_AsciiString("#") + aCanvasId;
-    }
 
     VT_GetWindow() = new Wasm_Window(aCanvasId);
     Graphic3d_Vec2i aRealSize;
@@ -808,7 +816,7 @@ TCollection_AsciiString ViewerTest::ViewerInit(const ViewerTest_VinitParams& the
   }
 
 #if defined(HAVE_XLIB)
-  if (isNewDriver)
+  if (isNewDriver && !GetDisplayConnection().IsNull() && GetDisplayConnection()->FileDescriptor() != -1)
   {
     ::Display* aDispX = (::Display*)GetDisplayConnection()->GetDisplayAspect();
     Tcl_CreateFileHandler(XConnectionNumber(aDispX),
@@ -1611,7 +1619,8 @@ void ViewerTest::RemoveView(const TCollection_AsciiString& theViewName,
   aView->Remove();
 
 #if defined(HAVE_XLIB)
-  XFlush((::Display*)GetDisplayConnection()->GetDisplayAspect());
+  if (!GetDisplayConnection().IsNull())
+    GetDisplayConnection()->Flush();
 #endif
 
   // Keep context opened only if the closed view is last to avoid
@@ -1642,10 +1651,10 @@ void ViewerTest::RemoveView(const TCollection_AsciiString& theViewName,
       {
         ViewerTest_myDrivers.UnBind2(aCurrentContext->CurrentViewer()->Driver());
 #if defined(HAVE_XLIB)
-        Tcl_DeleteFileHandler(XConnectionNumber((::Display*)aCurrentContext->CurrentViewer()
-                                                  ->Driver()
-                                                  ->GetDisplayConnection()
-                                                  ->GetDisplayAspect()));
+        const Handle(Aspect_DisplayConnection)& aDispCon = aCurrentContext->CurrentViewer()->Driver()->GetDisplayConnection();
+
+        if (!aDispCon.IsNull() && aDispCon->FileDescriptor() != -1)
+          Tcl_DeleteFileHandler(aDispCon->FileDescriptor());
 #endif
       }
 
@@ -2244,14 +2253,16 @@ static LRESULT WINAPI AdvViewerWindowProc(HWND   theWinHandle,
     }
     default: {
       const Handle(V3d_View)& aView = ViewerTest::CurrentView();
-      if (!aView.IsNull() && !VT_GetWindow().IsNull())
+      WNT_Window* aWin = dynamic_cast<WNT_Window*>(VT_GetWindow().get());
+      if (!aView.IsNull() && aWin != nullptr)
       {
         MSG aMsg     = {};
         aMsg.hwnd    = theWinHandle;
         aMsg.message = theMsg;
-        aMsg.wParam  = wParam;
-        aMsg.lParam  = lParam;
-        if (VT_GetWindow()->ProcessMessage(*ViewerTest::CurrentEventManager(), aMsg))
+        aMsg.wParam = wParam;
+        aMsg.lParam = lParam;
+
+        if (aWin->ProcessMessage(*ViewerTest::CurrentEventManager(), aMsg))
         {
           return 0;
         }
@@ -2309,8 +2320,11 @@ int ViewerMainLoop(Standard_Integer theNbArgs, const char** theArgVec)
     ViewerTest::CurrentEventManager()->StartPickPoint(theArgVec[1], theArgVec[2], theArgVec[3]);
   }
 
-  Display* aDisplay = (Display*)GetDisplayConnection()->GetDisplayAspect();
-  XNextEvent(aDisplay, &aReport);
+  if (Handle(Xw_DisplayConnection)::DownCast(GetDisplayConnection()).IsNull())
+    return 0;
+
+  Display* aDisplay = (Display* )GetDisplayConnection()->GetDisplayAspect();
+  XNextEvent (aDisplay, &aReport);
 
   // Handle event for the chosen display connection
   switch (aReport.type)
@@ -2327,7 +2341,7 @@ int ViewerMainLoop(Standard_Integer theNbArgs, const char** theArgVec)
     }
     case FocusIn: {
       // Activate inactive view
-      Window aWindow = !VT_GetWindow().IsNull() ? VT_GetWindow()->XWindow() : 0;
+      Window aWindow = !VT_GetWindow().IsNull() ? (Window)VT_GetWindow()->NativeHandle() : 0;
       if (aWindow != aReport.xfocus.window)
       {
         ActivateView(FindViewIdByWindowHandle(aReport.xfocus.window));
@@ -2336,9 +2350,11 @@ int ViewerMainLoop(Standard_Integer theNbArgs, const char** theArgVec)
     }
     default: {
       const Handle(V3d_View)& aView = ViewerTest::CurrentView();
-      if (!aView.IsNull() && !VT_GetWindow().IsNull())
+      Xw_Window* aWin = dynamic_cast<Xw_Window*>(VT_GetWindow().get());
+      if (!aView.IsNull()
+       && aWin != nullptr)
       {
-        VT_GetWindow()->ProcessMessage(*ViewerTest::CurrentEventManager(), aReport);
+        aWin->ProcessMessage(*ViewerTest::CurrentEventManager(), aReport);
       }
       break;
     }
@@ -2352,15 +2368,13 @@ int ViewerMainLoop(Standard_Integer theNbArgs, const char** theArgVec)
 //==============================================================================
 static void VProcessEvents(ClientData theDispX, int)
 {
-  Display*                         aDispX = (Display*)theDispX;
   Handle(Aspect_DisplayConnection) aDispConn;
   for (ViewerTest_ViewerCommandsGraphicDriverMap::Iterator aDriverIter(ViewerTest_myDrivers);
        aDriverIter.More();
        aDriverIter.Next())
   {
-    const Handle(Aspect_DisplayConnection)& aDispConnTmp =
-      aDriverIter.Key2()->GetDisplayConnection();
-    if ((Display*)aDispConnTmp->GetDisplayAspect() == aDispX)
+    const Handle(Aspect_DisplayConnection)& aDispConnTmp = aDriverIter.Key2()->GetDisplayConnection();
+    if (aDispConnTmp->GetDisplayAspect() == (Aspect_XDisplay*)theDispX)
     {
       aDispConn = aDispConnTmp;
       break;
@@ -2373,37 +2387,42 @@ static void VProcessEvents(ClientData theDispX, int)
   }
 
   // process new events in queue
-  SetDisplayConnection(aDispConn);
-  int aNbRemain = 0;
-  for (int aNbEventsMax = XPending(aDispX), anEventIter(0);;)
+  SetDisplayConnection (aDispConn);
+
+  if (dynamic_cast<Xw_DisplayConnection*>(aDispConn.get()) != nullptr)
   {
-    const int anEventResult = ViewerMainLoop(0, NULL);
-    if (anEventResult == 0)
+    int aNbRemain = 0;
+    Display* aDispX = (Display* )theDispX;
+    for (int aNbEventsMax = XPending (aDispX), anEventIter (0);;)
     {
-      return;
+      const int anEventResult = ViewerMainLoop (0, NULL);
+      if (anEventResult == 0)
+      {
+        return;
+      }
+
+      aNbRemain = XPending (aDispX);
+      if (++anEventIter >= aNbEventsMax
+       || aNbRemain <= 0)
+      {
+        break;
+      }
     }
 
-    aNbRemain = XPending(aDispX);
-    if (++anEventIter >= aNbEventsMax || aNbRemain <= 0)
+    // Listening X events through Tcl_CreateFileHandler() callback is fragile,
+    // it is possible that new events will arrive to queue before the end of this callback
+    // so that either this callback should go into an infinite loop (blocking processing of other events)
+    // or to keep unprocessed events till the next queue update (which can arrive not soon).
+    // Sending a dummy event in this case is a simple workaround (still, it is possible that new event will be queued in-between).
+    if (aNbRemain != 0)
     {
-      break;
+      XEvent aDummyEvent;
+      memset (&aDummyEvent, 0, sizeof(aDummyEvent));
+      aDummyEvent.type = ClientMessage;
+      aDummyEvent.xclient.format = 32;
+      XSendEvent (aDispX, InputFocus, False, 0, &aDummyEvent);
+      XFlush (aDispX);
     }
-  }
-
-  // Listening X events through Tcl_CreateFileHandler() callback is fragile,
-  // it is possible that new events will arrive to queue before the end of this callback
-  // so that either this callback should go into an infinite loop (blocking processing of other
-  // events) or to keep unprocessed events till the next queue update (which can arrive not soon).
-  // Sending a dummy event in this case is a simple workaround (still, it is possible that new event
-  // will be queued in-between).
-  if (aNbRemain != 0)
-  {
-    XEvent aDummyEvent;
-    memset(&aDummyEvent, 0, sizeof(aDummyEvent));
-    aDummyEvent.type           = ClientMessage;
-    aDummyEvent.xclient.format = 32;
-    XSendEvent(aDispX, InputFocus, False, 0, &aDummyEvent);
-    XFlush(aDispX);
   }
 
   if (const Handle(AIS_InteractiveContext)& anActiveCtx = ViewerTest::GetAISContext())
