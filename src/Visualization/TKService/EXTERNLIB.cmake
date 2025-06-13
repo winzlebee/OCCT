@@ -8,6 +8,7 @@ set(OCCT_TKService_EXTERNAL_LIBS
   CSF_advapi32
   CSF_user32
   CSF_XwLibs
+  CSF_wayland
   CSF_dpsLibs
   CSF_XmuLibs
   CSF_fontconfig
