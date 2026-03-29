@@ -272,7 +272,9 @@ int Graphic3d_ShaderManager::defaultGlslVersion(
             theProgram->SetHeader("#version 120");
           }
         }
-        if ((theBits & Graphic3d_ShaderFlags_StippleLine) != 0 || theProgram->IsPBR())
+        if ((theBits & Graphic3d_ShaderFlags_StippleLine) != 0
+            || (theBits & Graphic3d_ShaderFlags_LineWidth)
+            || theProgram->IsPBR())
         {
           if (IsGapiGreaterEqual(3, 0))
           {
@@ -762,6 +764,228 @@ TCollection_AsciiString Graphic3d_ShaderManager::pointSpriteShadingSrc(
   return aSrcFragGetColor;
 }
 
+//! Number of line end cap segments. Set to 0 to disable round end caps.
+const int THE_LINE_END_CAP_SEGMENTS = 4;
+
+//! Generate vertex shader source code for line expansion via gl_VertexID.
+//! The vertex shader fetches line endpoint positions (and optionally per-vertex colors)
+//! from a texture buffer object, then expands each line segment into a screen-space quad
+//! (with optional round end caps) using gl_VertexID to determine which corner of the quad
+//! to output.
+static TCollection_AsciiString prepareLineExpandVertSrc(
+  Graphic3d_ShaderObject::ShaderVariableList& theUniforms,
+  Graphic3d_ShaderObject::ShaderVariableList& theStageInOuts,
+  int                                         theBits)
+{
+  if ((theBits & Graphic3d_ShaderFlags_LineWidth) == 0)
+  {
+    return TCollection_AsciiString();
+  }
+
+  // Declare TBO uniforms
+  theUniforms.Append(Graphic3d_ShaderObject::ShaderVariable("samplerBuffer occLineTexData",   Graphic3d_TOS_VERTEX));
+  theUniforms.Append(Graphic3d_ShaderObject::ShaderVariable("isamplerBuffer occLineTexIndex", Graphic3d_TOS_VERTEX));
+  theUniforms.Append(Graphic3d_ShaderObject::ShaderVariable("int  occLineDataStride",         Graphic3d_TOS_VERTEX));
+  theUniforms.Append(Graphic3d_ShaderObject::ShaderVariable("ivec4 occLineDataConfig",        Graphic3d_TOS_VERTEX));
+  theUniforms.Append(Graphic3d_ShaderObject::ShaderVariable("int  occLineBaseVertex",         Graphic3d_TOS_VERTEX));
+  theUniforms.Append(Graphic3d_ShaderObject::ShaderVariable("vec4 occViewport",               Graphic3d_TOS_VERTEX));
+  theUniforms.Append(Graphic3d_ShaderObject::ShaderVariable("float occLineWidth",             Graphic3d_TOS_VERTEX));
+
+  const bool hasVertColor = (theBits & Graphic3d_ShaderFlags_VertColor) != 0;
+
+  // Each line segment is rendered as a triangle strip flattened into GL_TRIANGLES.
+  // For a simple quad (no end caps): 6 vertices per segment (2 triangles).
+  // With round end caps: additional triangles for each semicircle.
+  //
+  // Quad corner layout:
+  //   0 (A, +perp) --- 2 (B, +perp)
+  //   |                |
+  //   1 (A, -perp) --- 3 (B, -perp)
+  //
+  // Triangle 0: corners 0,1,2
+  // Triangle 1: corners 2,1,3
+
+  const int nbCapSegs = THE_LINE_END_CAP_SEGMENTS;
+  // Each cap semicircle is tessellated as a triangle fan from the cap center.
+  // nbCapSegs triangles per cap, 3 vertices each.
+  const int nbCapVerts = nbCapSegs > 0 ? nbCapSegs * 3 : 0;
+  // Total vertices per segment: body quad (6) + 2 caps
+  const int nbVertsPerSeg = 6 + nbCapVerts * 2;
+
+  TCollection_AsciiString aSrc = TCollection_AsciiString()
+    + EOL"vec3 occLineTexFetchPos (int theVertIdx)"
+    + EOL"{"
+    + EOL"  int aBase = theVertIdx * occLineDataStride + occLineDataConfig.x;"
+    + EOL"  return vec3 (texelFetch (occLineTexData, aBase).r,"
+    + EOL"               texelFetch (occLineTexData, aBase + 1).r,"
+    + EOL"               texelFetch (occLineTexData, aBase + 2).r);"
+    + EOL"}"
+    + EOL"";
+
+  if (hasVertColor)
+  {
+    aSrc += TCollection_AsciiString()
+      + EOL"vec4 occLineTexFetchColor (int theVertIdx)"
+      + EOL"{"
+      + EOL"  int aBase = theVertIdx * occLineDataStride + occLineDataConfig.y;"
+      + EOL"  uint aBits = floatBitsToUint (texelFetch (occLineTexData, aBase).r);"
+      + EOL"  return vec4 (float (aBits & 0xFFu) / 255.0,"
+      + EOL"               float ((aBits >> 8u)  & 0xFFu) / 255.0,"
+      + EOL"               float ((aBits >> 16u) & 0xFFu) / 255.0,"
+      + EOL"               float ((aBits >> 24u) & 0xFFu) / 255.0);"
+      + EOL"}"
+      + EOL"";
+  }
+
+  aSrc += TCollection_AsciiString()
+    + EOL"void main()"
+    + EOL"{"
+    + EOL"  int aVertsPerSeg = " + nbVertsPerSeg + ";"
+    + EOL"  int aSegId  = gl_VertexID / aVertsPerSeg;"
+    + EOL"  int aVertId = gl_VertexID - aSegId * aVertsPerSeg;" // mod without mod
+    + EOL""
+    + EOL"  int aSegStride = occLineDataConfig.z;" // 2 for GL_LINES, 1 for GL_LINE_STRIP
+    + EOL"  bool aUseIndex = occLineDataConfig.w != 0;"
+    + EOL""
+    + EOL"  int aRawIdxA = occLineBaseVertex + aSegId * aSegStride;"
+    + EOL"  int aRawIdxB = aRawIdxA + 1;"
+    + EOL""
+    + EOL"  int aVertIdxA, aVertIdxB;"
+    + EOL"  if (aUseIndex)"
+    + EOL"  {"
+    + EOL"    aVertIdxA = texelFetch (occLineTexIndex, aRawIdxA).r;"
+    + EOL"    aVertIdxB = texelFetch (occLineTexIndex, aRawIdxB).r;"
+    + EOL"  }"
+    + EOL"  else"
+    + EOL"  {"
+    + EOL"    aVertIdxA = aRawIdxA;"
+    + EOL"    aVertIdxB = aRawIdxB;"
+    + EOL"  }"
+    + EOL""
+    + EOL"  vec3 aPosA = occLineTexFetchPos (aVertIdxA);"
+    + EOL"  vec3 aPosB = occLineTexFetchPos (aVertIdxB);"
+    + EOL""
+    + EOL"  vec4 aClipA = occProjectionMatrix * occWorldViewMatrix * occModelWorldMatrix * vec4 (aPosA, 1.0);"
+    + EOL"  vec4 aClipB = occProjectionMatrix * occWorldViewMatrix * occModelWorldMatrix * vec4 (aPosB, 1.0);"
+    + EOL""
+    + EOL"  vec2 aNdcA = aClipA.xy / aClipA.w;"
+    + EOL"  vec2 aNdcB = aClipB.xy / aClipB.w;"
+    + EOL""
+    + EOL"  vec2 aScreenA = (aNdcA * 0.5 + 0.5) * occViewport.zw;"
+    + EOL"  vec2 aScreenB = (aNdcB * 0.5 + 0.5) * occViewport.zw;"
+    + EOL""
+    + EOL"  vec2 aLineDir  = aScreenB - aScreenA;"
+    + EOL"  float aLineLen = length (aLineDir);"
+    + EOL"  if (aLineLen < 0.001) { aLineDir = vec2 (1.0, 0.0); }"
+    + EOL"  else                  { aLineDir = aLineDir / aLineLen; }"
+    + EOL"  vec2 aLinePerp = vec2 (-aLineDir.y, aLineDir.x);"
+    + EOL""
+    + EOL"  float aHalfW = occLineWidth * 0.5;"
+    + EOL""
+    + EOL"  vec2 aScreenPos;"
+    + EOL"  float aDepthW;" // w for perspective correction
+    + EOL"  float aDepthZ;" // z for depth buffer
+    + EOL"  int aEndpoint;" // which endpoint: 0=A, 1=B
+    + EOL"";
+
+  // Body quad: first 6 vertices
+  aSrc += TCollection_AsciiString()
+    + EOL"  if (aVertId < 6)"
+    + EOL"  {"
+    + EOL"    // Body quad: two triangles (0,1,2) and (2,1,3)"
+    + EOL"    aEndpoint = (aVertId == 2 || aVertId == 3 || aVertId == 5) ? 1 : 0;"
+    + EOL"    float aSide = (aVertId == 0 || aVertId == 2 || aVertId == 3) ? 1.0 : -1.0;"
+    + EOL"    aScreenPos = (aEndpoint == 0) ? aScreenA : aScreenB;"
+    + EOL"    aScreenPos += aLinePerp * aHalfW * aSide;"
+    + EOL"    aDepthW = (aEndpoint == 0) ? aClipA.w : aClipB.w;"
+    + EOL"    aDepthZ = (aEndpoint == 0) ? aClipA.z : aClipB.z;"
+    + EOL"  }";
+
+  // Round end caps
+  if (nbCapSegs > 0)
+  {
+    aSrc += TCollection_AsciiString()
+      + EOL"  else"
+      + EOL"  {"
+      + EOL"    int aCapVertId = aVertId - 6;"
+      + EOL"    int aCapTotalVerts = " + nbCapVerts + ";"
+      + EOL"    bool isCapA = aCapVertId < aCapTotalVerts;"
+      + EOL"    int aCapLocalId = isCapA ? aCapVertId : aCapVertId - aCapTotalVerts;"
+      + EOL""
+      + EOL"    // Triangle fan: each triangle = (center, edge[i], edge[i+1])"
+      + EOL"    int aTriIdx  = aCapLocalId / 3;"
+      + EOL"    int aTriVert = aCapLocalId - aTriIdx * 3;"
+      + EOL""
+      + EOL"    vec2 aCenter = isCapA ? aScreenA : aScreenB;"
+      + EOL"    aDepthW = isCapA ? aClipA.w : aClipB.w;"
+      + EOL"    aDepthZ = isCapA ? aClipA.z : aClipB.z;"
+      + EOL"    aEndpoint = isCapA ? 0 : 1;"
+      + EOL""
+      + EOL"    // Cap A is a semicircle facing -lineDir, Cap B faces +lineDir"
+      + EOL"    float aBaseAngle = isCapA ? PI * 0.5 : -PI * 0.5;"
+      + EOL"    float aAngleStep = PI / float(" + nbCapSegs + ");"
+      + EOL""
+      + EOL"    if (aTriVert == 0)"
+      + EOL"    {"
+      + EOL"      aScreenPos = aCenter;"
+      + EOL"    }"
+      + EOL"    else"
+      + EOL"    {"
+      + EOL"      int aEdgeIdx = aTriIdx + (aTriVert - 1);" // 0 for vert 1, 1 for vert 2
+      + EOL"      float aPhi = aBaseAngle + float(aEdgeIdx) * aAngleStep;"
+      + EOL"      aScreenPos = aCenter + aHalfW * vec2 (cos (aPhi) * aLinePerp + sin (aPhi) * (-aLineDir));"
+      + EOL"    }"
+      + EOL"  }";
+  }
+  else
+  {
+    // No end caps - clamp to body
+    aSrc += TCollection_AsciiString()
+      + EOL"  else"
+      + EOL"  {"
+      + EOL"    aEndpoint = 0;"
+      + EOL"    aScreenPos = aScreenA;"
+      + EOL"    aDepthW = aClipA.w;"
+      + EOL"    aDepthZ = aClipA.z;"
+      + EOL"  }";
+  }
+
+  // Convert back to clip space
+  aSrc += TCollection_AsciiString()
+    + EOL""
+    + EOL"  vec2 aNdc = aScreenPos / occViewport.zw * 2.0 - 1.0;"
+    + EOL"  gl_Position = vec4 (aNdc * aDepthW, aDepthZ, aDepthW);"
+    + EOL"";
+
+  // Per-vertex color
+  if (hasVertColor)
+  {
+    aSrc += TCollection_AsciiString()
+      + EOL"  VertColor = occLineTexFetchColor (aEndpoint == 0 ? aVertIdxA : aVertIdxB);";
+  }
+
+  // Clip planes: PositionWorld
+  if ((theBits & Graphic3d_ShaderFlags_ClipPlanesN) != 0)
+  {
+    aSrc += TCollection_AsciiString()
+      + EOL"  vec3 aPos = (aEndpoint == 0) ? aPosA : aPosB;"
+      + EOL"  PositionWorld = occModelWorldMatrix * vec4 (aPos, 1.0);";
+  }
+
+  // Stipple line: ScreenSpaceCoord
+  if ((theBits & Graphic3d_ShaderFlags_StippleLine) != 0)
+  {
+    aSrc += TCollection_AsciiString()
+      + EOL"  vec2 aStipplePos = gl_Position.xy / gl_Position.w;"
+      + EOL"  aStipplePos = aStipplePos * 0.5 + 0.5;"
+      + EOL"  ScreenSpaceCoord = aStipplePos.xy * occViewport.zw + occViewport.xy;";
+  }
+
+  aSrc += EOL"}";
+
+  return aSrc;
+}
+
 //! Prepare GLSL source for geometry shader according to parameters.
 static TCollection_AsciiString prepareGeomMainSrc(
   Graphic3d_ShaderObject::ShaderVariableList& theUnifoms,
@@ -1072,10 +1296,21 @@ occ::handle<Graphic3d_ShaderProgram> Graphic3d_ShaderManager::getStdProgramUnlit
     }
   }
 
-  aSrcVert = aSrcVertExtraFunc + EOL "void main()" EOL "{" + aSrcVertExtraMain
-             + THE_VERT_gl_Position + aSrcVertEndMain + EOL "}";
+  TCollection_AsciiString aSrcLineExpand = prepareLineExpandVertSrc(aUniforms, aStageInOuts, theBits);
+  const bool isLineExpand = !aSrcLineExpand.IsEmpty();
+  if (isLineExpand)
+  {
+    aSrcVert = aSrcLineExpand;
+  }
+  else
+  {
+    aSrcVert = aSrcVertExtraFunc + EOL "void main()" EOL "{" + aSrcVertExtraMain
+               + THE_VERT_gl_Position + aSrcVertEndMain + EOL "}";
+  }
 
-  TCollection_AsciiString aSrcGeom = prepareGeomMainSrc(aUniforms, aStageInOuts, theBits);
+  TCollection_AsciiString aSrcGeom = isLineExpand
+    ? TCollection_AsciiString()
+    : prepareGeomMainSrc(aUniforms, aStageInOuts, theBits);
   aSrcFragGetColor += (theBits & Graphic3d_ShaderFlags_MeshEdges) != 0 ? THE_FRAG_WIREFRAME_COLOR
                                                                        : EOL
                         "#define getFinalColor getColor";

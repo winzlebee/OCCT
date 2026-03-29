@@ -15,6 +15,9 @@
 
 #include <OpenGl_PrimitiveArray.hxx>
 
+#include <Graphic3d_ShaderFlags.hxx>
+#include <Graphic3d_TextureUnit.hxx>
+#include <OpenGl_ArbTBO.hxx>
 #include <OpenGl_PointSprite.hxx>
 #include <OpenGl_Sampler.hxx>
 #include <OpenGl_ShaderManager.hxx>
@@ -25,6 +28,19 @@
 
 namespace
 {
+
+//! Number of line end cap segments - must match THE_LINE_END_CAP_SEGMENTS in Graphic3d_ShaderManager.cxx
+const int THE_LINE_END_CAP_SEGMENTS = 4;
+
+//! Return the number of proxy GL_TRIANGLES vertices per line segment
+//! for the gl_VertexID line expansion approach.
+static int lineExpandVertsPerSegment()
+{
+  const int nbCapSegs = THE_LINE_END_CAP_SEGMENTS;
+  const int nbCapVerts = nbCapSegs > 0 ? nbCapSegs * 3 : 0;
+  return 6 + nbCapVerts * 2;
+}
+
 //! Convert data type to GL info
 inline GLenum toGlDataType(const Graphic3d_TypeOfData theType, GLint& theNbComp)
 {
@@ -182,6 +198,16 @@ void OpenGl_PrimitiveArray::clearMemoryGL(const occ::handle<OpenGl_Context>& the
   {
     myVboAttribs->Release(theGlCtx.operator->());
     myVboAttribs.Nullify();
+  }
+  if (myLineTboData != 0)
+  {
+    theGlCtx->core20fwd->glDeleteTextures(1, &myLineTboData);
+    myLineTboData = 0;
+  }
+  if (myLineTboIndex != 0)
+  {
+    theGlCtx->core20fwd->glDeleteTextures(1, &myLineTboIndex);
+    myLineTboIndex = 0;
   }
 }
 
@@ -533,6 +559,167 @@ void OpenGl_PrimitiveArray::drawArray(const occ::handle<OpenGl_Workspace>& theWo
 
 //=================================================================================================
 
+void OpenGl_PrimitiveArray::drawLinesExpanded(
+  const occ::handle<OpenGl_Workspace>& theWorkspace,
+  const NCollection_Vec4<float>*       theFaceColors) const
+{
+  const occ::handle<OpenGl_Context>& aGlContext = theWorkspace->GetGlContext();
+
+  if (myVboAttribs.IsNull() || myAttribs.IsNull())
+  {
+    return;
+  }
+
+  const occ::handle<OpenGl_ShaderProgram>& aProg = aGlContext->ActiveProgram();
+
+  if (aProg.IsNull())
+  {
+    return;
+  }
+
+  // Find attribute offsets in the interleaved buffer.
+  // Stride and offsets are in float-sized units (4 bytes) for texelFetch with GL_R32F.
+  const int aStrideBytes  = myAttribs->Stride;
+  const int aStrideFloats = aStrideBytes / 4;
+
+  int aPosOffsetFloats   = -1;
+  int aColorOffsetFloats = -1;
+  for (int anAttribIter = 0; anAttribIter < myAttribs->NbAttributes; ++anAttribIter)
+  {
+    const int anOffsetBytes = myAttribs->AttributeOffset(anAttribIter);
+    const Graphic3d_Attribute& anAttrib = myAttribs->Attribute(anAttribIter);
+    if (anAttrib.Id == Graphic3d_TOA_POS)
+    {
+      aPosOffsetFloats = anOffsetBytes / 4;
+    }
+    else if (anAttrib.Id == Graphic3d_TOA_COLOR)
+    {
+      aColorOffsetFloats = anOffsetBytes / 4;
+    }
+  }
+
+  if (aPosOffsetFloats < 0)
+  {
+    return;
+  }
+
+  // Segment stride: 2 for GL_LINES (pairs), 1 for GL_LINE_STRIP (adjacent)
+  const int aSegStride = (myDrawMode == GL_LINES) ? 2 : 1;
+  const bool isIndexed = !myVboIndices.IsNull();
+
+  if (myLineTboData == 0)
+  {
+    aGlContext->core20fwd->glGenTextures(1, &myLineTboData);
+  }
+
+  aGlContext->core20fwd->glActiveTexture(GL_TEXTURE0 + Graphic3d_TextureUnit_15);
+  aGlContext->core20fwd->glBindTexture(GL_TEXTURE_BUFFER, myLineTboData);
+  aGlContext->arbTBO->glTexBuffer(GL_TEXTURE_BUFFER, GL_R32F, myVboAttribs->GetBufferId());
+
+  // Create/bind TBO for index data (if indexed)
+  if (isIndexed)
+  {
+    if (myLineTboIndex == 0)
+    {
+      aGlContext->core20fwd->glGenTextures(1, &myLineTboIndex);
+    }
+    aGlContext->core20fwd->glActiveTexture(GL_TEXTURE0 + Graphic3d_TextureUnit_14);
+    aGlContext->core20fwd->glBindTexture(GL_TEXTURE_BUFFER, myLineTboIndex);
+
+    const GLenum anIdxFormat = (myVboIndices->GetDataType() == GL_UNSIGNED_SHORT)
+                                 ? GL_R16I : GL_R32I;
+    aGlContext->arbTBO->glTexBuffer(GL_TEXTURE_BUFFER, anIdxFormat, myVboIndices->GetBufferId());
+  }
+
+  // Set sampler uniforms (texture unit indices)
+  aProg->SetUniform(aGlContext, aProg->GetStateLocation(OpenGl_OCCT_LINE_TEX_DATA),  (int)Graphic3d_TextureUnit_15);
+  aProg->SetUniform(aGlContext, aProg->GetStateLocation(OpenGl_OCCT_LINE_TEX_INDEX), (int)Graphic3d_TextureUnit_14);
+
+  // Set data layout uniforms
+  aProg->SetUniform(aGlContext, aProg->GetStateLocation(OpenGl_OCCT_LINE_DATA_STRIDE), aStrideFloats);
+
+  const NCollection_Vec4<int> aConfig(aPosOffsetFloats, aColorOffsetFloats, aSegStride, isIndexed ? 1 : 0);
+  aProg->SetUniform(aGlContext, aProg->GetStateLocation(OpenGl_OCCT_LINE_DATA_CONFIG), aConfig);
+
+  // Push line width (from line aspect, not edge aspect)
+  const OpenGl_Aspects* anAspect = theWorkspace->Aspects();
+  aProg->SetUniform(aGlContext,
+                    aProg->GetStateLocation(OpenGl_OCCT_LINE_WIDTH),
+                    anAspect->Aspect()->LineWidth() * aGlContext->LineWidthScale());
+
+  // Number of proxy vertices per line segment (body quad + end caps)
+  const int aVertsPerSeg = lineExpandVertsPerSegment();
+
+  // Issue proxy draw calls
+  if (isIndexed)
+  {
+    if (!myBounds.IsNull())
+    {
+      int aBaseIndex = 0;
+      for (int aGroupIter = 0; aGroupIter < myBounds->NbBounds; ++aGroupIter)
+      {
+        const int aNbElems = myBounds->Bounds[aGroupIter];
+        if (theFaceColors != nullptr)
+        {
+          aGlContext->SetColor4fv(theFaceColors[aGroupIter]);
+        }
+        const int aNbSegs = (myDrawMode == GL_LINES) ? aNbElems / 2 : std::max(aNbElems - 1, 0);
+        if (aNbSegs > 0)
+        {
+          aProg->SetUniform(aGlContext, aProg->GetStateLocation(OpenGl_OCCT_LINE_BASE_VERTEX), aBaseIndex);
+          aGlContext->core11fwd->glDrawArrays(GL_TRIANGLES, 0, aNbSegs * aVertsPerSeg);
+        }
+        aBaseIndex += aNbElems;
+      }
+    }
+    else
+    {
+      const int aNbIndices = myVboIndices->GetElemsNb();
+      const int aNbSegs = (myDrawMode == GL_LINES) ? aNbIndices / 2 : std::max(aNbIndices - 1, 0);
+      aProg->SetUniform(aGlContext, aProg->GetStateLocation(OpenGl_OCCT_LINE_BASE_VERTEX), 0);
+      aGlContext->core11fwd->glDrawArrays(GL_TRIANGLES, 0, aNbSegs * aVertsPerSeg);
+    }
+  }
+  else if (!myBounds.IsNull())
+  {
+    int aFirstElem = 0;
+    for (int aGroupIter = 0; aGroupIter < myBounds->NbBounds; ++aGroupIter)
+    {
+      const int aNbElems = myBounds->Bounds[aGroupIter];
+      if (theFaceColors != nullptr)
+      {
+        aGlContext->SetColor4fv(theFaceColors[aGroupIter]);
+      }
+      const int aNbSegs = (myDrawMode == GL_LINES) ? aNbElems / 2 : std::max(aNbElems - 1, 0);
+      if (aNbSegs > 0)
+      {
+        aProg->SetUniform(aGlContext, aProg->GetStateLocation(OpenGl_OCCT_LINE_BASE_VERTEX), aFirstElem);
+        aGlContext->core11fwd->glDrawArrays(GL_TRIANGLES, 0, aNbSegs * aVertsPerSeg);
+      }
+      aFirstElem += aNbElems;
+    }
+  }
+  else
+  {
+    const int aNbVerts = myVboAttribs->GetElemsNb();
+    const int aNbSegs = (myDrawMode == GL_LINES) ? aNbVerts / 2 : std::max(aNbVerts - 1, 0);
+    aProg->SetUniform(aGlContext, aProg->GetStateLocation(OpenGl_OCCT_LINE_BASE_VERTEX), 0);
+    aGlContext->core11fwd->glDrawArrays(GL_TRIANGLES, 0, aNbSegs * aVertsPerSeg);
+  }
+
+  // Unbind TBOs
+  aGlContext->core20fwd->glActiveTexture(GL_TEXTURE0 + Graphic3d_TextureUnit_15);
+  aGlContext->core20fwd->glBindTexture(GL_TEXTURE_BUFFER, 0);
+  if (isIndexed)
+  {
+    aGlContext->core20fwd->glActiveTexture(GL_TEXTURE0 + Graphic3d_TextureUnit_14);
+    aGlContext->core20fwd->glBindTexture(GL_TEXTURE_BUFFER, 0);
+  }
+  aGlContext->core20fwd->glActiveTexture(GL_TEXTURE0);
+}
+
+//=================================================================================================
+
 void OpenGl_PrimitiveArray::drawEdges(const occ::handle<OpenGl_Workspace>& theWorkspace) const
 {
   const occ::handle<OpenGl_Context>& aGlContext = theWorkspace->GetGlContext();
@@ -550,6 +737,7 @@ void OpenGl_PrimitiveArray::drawEdges(const occ::handle<OpenGl_Workspace>& theWo
                                                  anAspect->Aspect()->EdgeLineType(),
                                                  Graphic3d_TypeOfShadingModel_Unlit,
                                                  Graphic3d_AlphaMode_Opaque,
+                                                 false,
                                                  false,
                                                  anAspect->ShaderProgramRes(aGlContext));
   }
@@ -706,7 +894,9 @@ OpenGl_PrimitiveArray::OpenGl_PrimitiveArray(const OpenGl_GraphicDriver* theDriv
 
     : myDrawMode(DRAW_MODE_NONE),
       myIsFillType(false),
-      myIsVboInit(false)
+      myIsVboInit(false),
+      myLineTboData(0),
+      myLineTboIndex(0)
 {
   if (theDriver != nullptr)
   {
@@ -727,7 +917,9 @@ OpenGl_PrimitiveArray::OpenGl_PrimitiveArray(const OpenGl_GraphicDriver*        
       myBounds(theBounds),
       myDrawMode(DRAW_MODE_NONE),
       myIsFillType(false),
-      myIsVboInit(false)
+      myIsVboInit(false),
+      myLineTboData(0),
+      myLineTboIndex(0)
 {
   if (!myIndices.IsNull() && myIndices->NbElements < 1)
   {
@@ -882,6 +1074,7 @@ void OpenGl_PrimitiveArray::Render(const occ::handle<OpenGl_Workspace>& theWorks
   const occ::handle<OpenGl_Context>& aCtx         = theWorkspace->GetGlContext();
 
   bool toDrawArray = true, toSetLinePolygMode = false;
+  bool toDrawLineExpanded = false; // use gl_VertexID line expansion
   int  toDrawInteriorEdges = 0; // 0 - no edges, 1 - glsl edges, 2 - polygonMode
   if (myIsFillType)
   {
@@ -976,11 +1169,16 @@ void OpenGl_PrimitiveArray::Render(const occ::handle<OpenGl_Workspace>& theWorks
       case GL_LINE_STRIP: {
         aShadingModel =
           aCtx->ShaderManager()->ChooseLineShadingModel(anAspectFace->ShadingModel(), hasVertNorm);
+        // Enable line width expansion when TBO is available and feature is not disabled
+        toDrawLineExpanded = !aCtx->caps->lineWidthDisable
+                             && aCtx->arbTBO != nullptr
+                             && aCtx->hasVertexID != OpenGl_FeatureNotAvailable;
         aCtx->ShaderManager()->BindLineProgram(occ::handle<OpenGl_TextureSet>(),
                                                anAspectFace->Aspect()->LineType(),
                                                aShadingModel,
                                                Graphic3d_AlphaMode_Opaque,
                                                hasVertColor,
+                                               toDrawLineExpanded,
                                                anAspectFace->ShaderProgramRes(aCtx));
         break;
       }
@@ -1044,7 +1242,14 @@ void OpenGl_PrimitiveArray::Render(const occ::handle<OpenGl_Workspace>& theWorks
         aCtx->SetLineWidth(anAspectFace->Aspect()->LineWidth());
       }
 
-      drawArray(theWorkspace, aFaceColors, hasColorAttrib);
+      if (toDrawLineExpanded)
+      {
+        drawLinesExpanded(theWorkspace, aFaceColors);
+      }
+      else
+      {
+        drawArray(theWorkspace, aFaceColors, hasColorAttrib);
+      }
       if (isForcedBlend)
       {
         aCtx->core11fwd->glDisable(GL_BLEND);

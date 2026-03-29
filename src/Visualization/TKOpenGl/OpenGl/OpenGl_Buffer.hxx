@@ -45,6 +45,9 @@ public:
   //! @return true if current object was initialized
   bool IsValid() const { return myBufferId != NO_BUFFER; }
 
+  //! @return GPU buffer name (ID)
+  unsigned int GetBufferId() const { return myBufferId; }
+
   //! @return the number of components per generic vertex attribute.
   unsigned int GetComponentsNb() const { return myComponentsNb; }
 

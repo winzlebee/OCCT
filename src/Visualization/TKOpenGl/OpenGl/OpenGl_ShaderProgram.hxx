@@ -90,6 +90,13 @@ enum OpenGl_StateVariable
   // PBR state
   OpenGl_OCCT_NB_SPEC_IBL_LEVELS,
 
+  // Line width expansion via gl_VertexID
+  OpenGl_OCCT_LINE_TEX_DATA,     // occLineTexData     (samplerBuffer - vertex data TBO)
+  OpenGl_OCCT_LINE_TEX_INDEX,    // occLineTexIndex    (usamplerBuffer - index data TBO)
+  OpenGl_OCCT_LINE_DATA_STRIDE,  // occLineDataStride  (int - vertex stride in floats)
+  OpenGl_OCCT_LINE_DATA_CONFIG,  // occLineDataConfig  (ivec4 - posOffset, colorOffset, segStride, useIndex)
+  OpenGl_OCCT_LINE_BASE_VERTEX,  // occLineBaseVertex  (int - base element for current draw group)
+
   // DON'T MODIFY THIS ITEM (insert new items before it)
   OpenGl_OCCT_NUMBER_OF_STATE_VARIABLES
 };

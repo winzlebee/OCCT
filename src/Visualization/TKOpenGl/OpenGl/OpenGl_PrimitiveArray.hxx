@@ -130,6 +130,11 @@ private:
                  const NCollection_Vec4<float>*       theFaceColors,
                  const bool                           theHasVertColor) const;
 
+  //! Draw lines as screen-space expanded quads using gl_VertexID proxy draw calls.
+  //! The existing VBO data is bound as a texture buffer and fetched in the vertex shader.
+  void drawLinesExpanded(const occ::handle<OpenGl_Workspace>& theWorkspace,
+                         const NCollection_Vec4<float>*       theFaceColors) const;
+
   //! Auxiliary procedures
   void drawEdges(const occ::handle<OpenGl_Workspace>& theWorkspace) const;
 
@@ -153,6 +158,9 @@ protected:
   short                                      myDrawMode;
   mutable bool                               myIsFillType;
   mutable bool                               myIsVboInit;
+
+  mutable unsigned int myLineTboData;  //!< GL texture wrapping myVboAttribs as GL_R32F TBO
+  mutable unsigned int myLineTboIndex; //!< GL texture wrapping myVboIndices as TBO
 
   size_t myUID; //!< Unique ID of primitive array.
 

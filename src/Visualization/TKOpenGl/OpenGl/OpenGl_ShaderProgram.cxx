@@ -86,7 +86,13 @@ const char* OpenGl_ShaderProgram::PredefinedKeywords[] = {
   "occOrthoScale",          // OpenGl_OCCT_ORTHO_SCALE
   "occSilhouetteThickness", // OpenGl_OCCT_SILHOUETTE_THICKNESS
 
-  "occNbSpecIBLLevels" // OpenGl_OCCT_NB_SPEC_IBL_LEVELS
+  "occNbSpecIBLLevels", // OpenGl_OCCT_NB_SPEC_IBL_LEVELS
+
+  "occLineTexData",     // OpenGl_OCCT_LINE_TEX_DATA
+  "occLineTexIndex",    // OpenGl_OCCT_LINE_TEX_INDEX
+  "occLineDataStride",  // OpenGl_OCCT_LINE_DATA_STRIDE
+  "occLineDataConfig",  // OpenGl_OCCT_LINE_DATA_CONFIG
+  "occLineBaseVertex",  // OpenGl_OCCT_LINE_BASE_VERTEX
 };
 
 namespace

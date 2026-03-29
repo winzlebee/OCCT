@@ -1061,6 +1061,7 @@ public: //! @name extensions
   OpenGl_FeatureFlag     hasHalfFloatBuffer; //!< Complex flag indicating support of half-float color buffer format (desktop OpenGL 3.0, GL_ARB_color_buffer_float, GL_EXT_color_buffer_half_float)
   OpenGl_FeatureFlag     hasSampleVariables; //!< Complex flag indicating support of MSAA variables in GLSL shader (desktop OpenGL 4.0, GL_ARB_sample_shading)
   OpenGl_FeatureFlag     hasGeometryStage;   //!< Complex flag indicating support of Geometry shader (desktop OpenGL 3.2, OpenGL ES 3.2, GL_EXT_geometry_shader)
+  OpenGl_FeatureFlag     hasVertexID;        //!< Complex flag indicating support of gl_VertexID in GLSL; OpenGL 3.0 / OpenGL ES 3.0 (GLSL 130 / GLSL ES 300) or OpenGL 2.1 + GL_EXT_gpu_shader4
   bool       arbDrawBuffers;     //!< GL_ARB_draw_buffers
   bool       arbNPTW;            //!< GL_ARB_texture_non_power_of_two
   bool       arbTexRG;           //!< GL_ARB_texture_rg

@@ -2270,6 +2270,9 @@ void OpenGl_GlFunctions::load(OpenGl_Context& theCtx, bool theIsCoreProfile)
                                      && checkExtensionShort("GL_EXT_shader_io_blocks")
                                    ? OpenGl_FeatureInExtensions
                                    : OpenGl_FeatureNotAvailable);
+
+  theCtx.hasVertexID =
+    isGlGreaterEqualShort(3, 0) ? OpenGl_FeatureInCore : OpenGl_FeatureNotAvailable;
 #else
 
   theCtx.hasTexRGBA8        = true;
@@ -2307,6 +2310,11 @@ void OpenGl_GlFunctions::load(OpenGl_Context& theCtx, bool theIsCoreProfile)
 
   theCtx.hasGeometryStage =
     isGlGreaterEqualShort(3, 2) ? OpenGl_FeatureInCore : OpenGl_FeatureNotAvailable;
+
+  theCtx.hasVertexID = isGlGreaterEqualShort(3, 0) ? OpenGl_FeatureInCore
+                       : checkExtensionShort("GL_EXT_gpu_shader4")
+                         ? OpenGl_FeatureInExtensions
+                         : OpenGl_FeatureNotAvailable;
 
   theCtx.hasSampleVariables = isGlGreaterEqualShort(4, 0) ? OpenGl_FeatureInCore
                               : theCtx.arbSampleShading   ? OpenGl_FeatureInExtensions

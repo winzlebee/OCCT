@@ -158,6 +158,7 @@ OpenGl_Context::OpenGl_Context(const occ::handle<OpenGl_Caps>& theCaps)
       hasHalfFloatBuffer(OpenGl_FeatureNotAvailable),
       hasSampleVariables(OpenGl_FeatureNotAvailable),
       hasGeometryStage(OpenGl_FeatureNotAvailable),
+      hasVertexID(OpenGl_FeatureNotAvailable),
       arbDrawBuffers(false),
       arbNPTW(false),
       arbTexRG(false),

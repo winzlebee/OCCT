@@ -24,9 +24,10 @@ OpenGl_Caps::OpenGl_Caps()
       compressedTexturesDisable(false),
       vboDisable(false),
       pntSpritesDisable(false),
-      keepArrayData(false),
+      keepArrayData(true),
       ffpEnable(false),
       usePolygonMode(false),
+      lineWidthDisable(false),
       useSystemBuffer(false),
       swapInterval(1),
       useZeroToOneDepth(false),
@@ -65,6 +66,7 @@ OpenGl_Caps& OpenGl_Caps::operator=(const OpenGl_Caps& theCopy)
   pntSpritesDisable         = theCopy.pntSpritesDisable;
   keepArrayData             = theCopy.keepArrayData;
   ffpEnable                 = theCopy.ffpEnable;
+  lineWidthDisable          = theCopy.lineWidthDisable;
   useSystemBuffer           = theCopy.useSystemBuffer;
   swapInterval              = theCopy.swapInterval;
   useZeroToOneDepth         = theCopy.useZeroToOneDepth;

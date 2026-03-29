@@ -182,6 +182,7 @@ void VUserDrawObj::Render(const occ::handle<OpenGl_Workspace>& theWorkspace) con
                                          Graphic3d_TypeOfShadingModel_Unlit,
                                          Graphic3d_AlphaMode_Opaque,
                                          false,
+                                         false,
                                          occ::handle<OpenGl_ShaderProgram>());
   aCtx->SetColor4fv(aColor);
 
@@ -557,6 +558,7 @@ static int VCaps(Draw_Interpretor& theDI, int theArgNb, const char** theArgVec)
     theDI << "SoftMode:" << (aCaps->contextNoAccel ? "1" : "0") << "\n";
     theDI << "FFP:     " << (aCaps->ffpEnable ? "1" : "0") << "\n";
     theDI << "PolygonMode: " << (aCaps->usePolygonMode ? "1" : "0") << "\n";
+    theDI << "LineWidth: " << (aCaps->lineWidthDisable ? "0" : "1") << "\n";
     theDI << "DepthZeroToOne: " << (aCaps->useZeroToOneDepth ? "1" : "0") << "\n";
     theDI << "VSync:   " << aCaps->swapInterval << "\n";
     theDI << "Compatible:" << (aCaps->contextCompatible ? "1" : "0") << "\n";
@@ -592,6 +594,10 @@ static int VCaps(Draw_Interpretor& theDI, int theArgNb, const char** theArgVec)
     else if (anArgCase == "-polygonmode" || anArgCase == "-nopolygonmode")
     {
       aCaps->usePolygonMode = Draw::ParseOnOffNoIterator(theArgNb, theArgVec, anArgIter);
+    }
+    else if (anArgCase == "-linewidth" || anArgCase == "-nolinewidth")
+    {
+      aCaps->lineWidthDisable = !Draw::ParseOnOffNoIterator(theArgNb, theArgVec, anArgIter);
     }
     else if (anArgCase == "-srgb" || anArgCase == "-nosrgb")
     {
